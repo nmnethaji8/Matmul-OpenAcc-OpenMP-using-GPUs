@@ -1,3 +1,4 @@
+//nvc++ -std=c++11 -mp=gpu -acc -gpu=nomanaged -Minfo -o manag managedvsexplicit.cu
 #include <iostream>
 #include <omp.h>
 #include <chrono>
