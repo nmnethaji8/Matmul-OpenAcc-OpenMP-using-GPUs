@@ -39,21 +39,23 @@ void matrixMultiplyOpenMP(int n, double *A, double *B, double *C, int num_device
         int thread_id = omp_get_thread_num();
         omp_set_default_device(thread_id); // Set the device for this thread
 
-        int rows_per_device = n / num_devices;
+        int rows_per_device = (n + num_devices - 1) / num_devices; // Adjust rows per device to handle non-even distribution
         int start_row = thread_id * rows_per_device;
-        int end_row = (thread_id == num_devices - 1) ? n : start_row + rows_per_device;
+        int end_row = min((thread_id + 1) * rows_per_device, n);
 
-#pragma omp target teams distribute parallel for collapse(2) map(to : A[start_row * n : rows_per_device * n], B[0 : n * n]) map(from : C[start_row * n : rows_per_device * n])
-        for (int i = start_row; i < end_row; i++)
-        {
-            for (int j = 0; j < n; j++)
+        if (start_row < end_row) {
+#pragma omp target teams distribute parallel for collapse(2) map(to: A[start_row * n : (end_row - start_row) * n], B[0 : n * n]) map(from: C[start_row * n : (end_row - start_row) * n])
+            for (int i = start_row; i < end_row; i++)
             {
-                double sum = 0.0;
-                for (int k = 0; k < n; k++)
+                for (int j = 0; j < n; j++)
                 {
-                    sum += A[i * n + k] * B[k * n + j];
+                    double sum = 0.0;
+                    for (int k = 0; k < n; k++)
+                    {
+                        sum += A[i * n + k] * B[k * n + j];
+                    }
+                    C[i * n + j] = sum;
                 }
-                C[i * n + j] = sum;
             }
         }
     }
@@ -65,23 +67,25 @@ void matrixMultiplyOpenACC(int n, double *A, double *B, double *C, int num_devic
 #pragma omp parallel num_threads(num_devices)
     {
         int thread_id = omp_get_thread_num();
-        int rows_per_device = n / num_devices;
+        int rows_per_device = (n + num_devices - 1) / num_devices; // Adjust rows per device to handle non-even distribution
         int start_row = thread_id * rows_per_device;
-        int end_row = (thread_id == num_devices - 1) ? n : start_row + rows_per_device;
+        int end_row = min((thread_id + 1) * rows_per_device, n);
 
-        acc_set_device_num(thread_id, acc_device_nvidia);
+        if (start_row < end_row) {
+            acc_set_device_num(thread_id, acc_device_nvidia);
 
-#pragma acc parallel loop collapse(2) copyin(A[start_row * n : rows_per_device * n], B[0 : n * n]) copyout(C[start_row * n : rows_per_device * n])
-        for (int i = start_row; i < end_row; i++)
-        {
-            for (int j = 0; j < n; j++)
+#pragma acc parallel loop collapse(2) copyin(A[start_row * n : (end_row - start_row) * n], B[0 : n * n]) copyout(C[start_row * n : (end_row - start_row) * n])
+            for (int i = start_row; i < end_row; i++)
             {
-                double sum = 0.0;
-                for (int k = 0; k < n; k++)
+                for (int j = 0; j < n; j++)
                 {
-                    sum += A[i * n + k] * B[k * n + j];
+                    double sum = 0.0;
+                    for (int k = 0; k < n; k++)
+                    {
+                        sum += A[i * n + k] * B[k * n + j];
+                    }
+                    C[i * n + j] = sum;
                 }
-                C[i * n + j] = sum;
             }
         }
     }
@@ -115,20 +119,13 @@ void matrixMultiplyCuBLAS(int n, double *A, double *B, double *C, const int num_
 bool compareMatrices(int n, double *C1, double *C2)
 {
     double error = 0.0;
-#pragma omp parallel for reduction(+ : error)
+#pragma omp parallel for reduction(+: error)
     for (int i = 0; i < n * n; i++)
     {
-        error += (fabs(C1[i] - C2[i]));
+        error += fabs(C1[i] - C2[i]);
     }
 
-    if (error > 1e-10)
-    {
-        return false;
-    }
-    else
-    {
-        return true;
-    }
+    return error <= 1e-10;
 }
 
 int main()
